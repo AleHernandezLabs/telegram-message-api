@@ -6,7 +6,12 @@ from application.use_cases.send_message_use_case import SendMessageUseCase
 from infrastructure.persistence.postgresql.repository import PostgresMessageRepository
 from infrastructure.telegram.telegram_service import AiogramTelegramService
 from infrastructure.persistence.postgresql.database import get_db
-import os
+from src.config import Settings
+import logging
+
+# Initialize the logger
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Telegram Message API",
@@ -14,13 +19,14 @@ app = FastAPI(
     API for sending messages through Telegram bots and logging them.
 
     Created by: Alejandro Exequiel Hernández Lara
-    Website: www.alehernandezlabs.com
-    Email: alehernandezlabs@gmail.com
     """,
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
+
+# Load settings from environment variables
+settings = Settings()
 
 # CORS configuration
 app.add_middleware(
@@ -32,14 +38,19 @@ app.add_middleware(
 )
 
 # API key verification
-API_KEY = os.getenv('API_KEY', 'your_production_api_key')
-
 def verify_api_key(api_key: str):
-    if api_key != API_KEY:
+    if api_key != settings.api_key:
         raise HTTPException(
             status_code=403,
             detail="Invalid API Key"
         )
+
+# Dependency injection for repository and Telegram service
+def get_repository(db: Session = Depends(get_db)):
+    return PostgresMessageRepository(db)
+
+def get_telegram_service():
+    return AiogramTelegramService()
 
 @app.post(
     "/send_message",
@@ -50,17 +61,19 @@ def verify_api_key(api_key: str):
 )
 async def send_message(
     request: SendMessageRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    repository: PostgresMessageRepository = Depends(get_repository),
+    telegram_service: AiogramTelegramService = Depends(get_telegram_service)
 ):
     verify_api_key(request.api_key)
-
-    repository = PostgresMessageRepository(db)
-    telegram_service = AiogramTelegramService()
     use_case = SendMessageUseCase(repository, telegram_service)
 
     try:
-        return await use_case.execute(request)
+        result = await use_case.execute(request)
+        logger.info(f"Message sent successfully: {result}")
+        return result
     except Exception as e:
+        logger.error(f"Failed to send message: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get(
@@ -72,7 +85,7 @@ def read_root():
     return {
         "message": "Welcome to Telegram Message API",
         "version": "1.0.0",
-        "author": "Alejandro Exequiel Hernández Lara",
-        "website": "www.alehernandezlabs.com",
-        "email": "alehernandezlabs@gmail.com"
+        "author": settings.author,
+        "website": settings.website,
+        "email": settings.email
     }
